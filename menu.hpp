@@ -89,8 +89,9 @@ namespace menu {
   >
   class BaseValueIncDec: public FocusableItem {
     typedef FocusableItem super;
+    typedef typename remove_reference<T>::type I;
   public:
-    explicit BaseValueIncDec(const T &value, const T &increment)
+    explicit BaseValueIncDec(const T &value, const I &increment)
     : value(value), increment(increment) {
     }
     void exec(char command) {
@@ -108,7 +109,8 @@ namespace menu {
       }
     }
   protected:
-    T value, increment;
+    T value;
+    I increment;
   };
 
   template <

@@ -19,24 +19,59 @@ void Printer::println() { print("               "); display::println(); }
 menu::Printer out;
 
 typedef ValueIncDecLimiter<uint16_t>::Repeat<0, 24 * 60 - 1> LimitTime;
-class Time: public ValueTimeHHMM<uint16_t, LimitTime> {
-  typedef ValueTimeHHMM<uint16_t, LimitTime> super;
+class Time: public ValueTimeHHMM<uint16_t&, LimitTime> {
+  typedef ValueTimeHHMM<uint16_t&, LimitTime> super;
 public:
   using super::value;
-  Time(): super(0) {}
+  using super::ValueTimeHHMM;
 };
 
-Time miLight0_On, miLight0_Off;
+#pragma pack(1)
+struct NVMem_TimeSpan {
+  uint16_t on, off;
+  bool is_active(uint16_t time) const {
+    return (time >= on) && (time < off);
+  }
+};
+
+#pragma pack(1)
+struct NVMem {
+  NVMem_TimeSpan light;
+  NVMem_TimeSpan heat[2];
+} nvmem;
+
+Time miLight0_On(nvmem.light.on), miLight0_Off(nvmem.light.off);
 List::Item miiLight0[2] = {
   { "Вкл:   ", miLight0_On },
   { "Откл:  ", miLight0_Off },
 };
 auto miLight0 = List::from(miiLight0);
 
-Time miTime;
+Time miHeat0_On(nvmem.heat[0].on), miHeat0_Off(nvmem.heat[0].off);
+List::Item miiHeat0[2] = {
+  { "Вкл:   ", miHeat0_On },
+  { "Откл:  ", miHeat0_Off },
+};
+auto miHeat0 = List::from(miiHeat0);
+
+Time miHeat1_On(nvmem.heat[1].on), miHeat1_Off(nvmem.heat[1].off);
+List::Item miiHeat1[2] = {
+  { "Вкл:   ", miHeat1_On },
+  { "Откл:  ", miHeat1_Off },
+};
+auto miHeat1 = List::from(miiHeat1);
+List::Item miiHeat[] = {
+  { "Утро>  ", miHeat0 },
+  { "Вечер> ", miHeat1 },
+};
+auto miHeat = List::from(miiHeat);
+
+uint16_t time;
+Time miTime(time);
 List::Item miiMain[] = {
   { "Время: ", miTime },
   { "Свет>  ", miLight0 },
+  { "Грев>  ", miHeat },
 };
 auto miMain = List::from(miiMain);
 
@@ -53,7 +88,7 @@ uint16_t clampHHMM(uint16_t value) {
 
 bool run = false;
 void setup() {
-  // Serial.begin(9600);
+  Serial.begin(9600);
 
   display::initialize();
   print("Init...");
@@ -65,16 +100,14 @@ void setup() {
   pciSetup(ENC_DEC);
   pciSetup(ENC_BTN);
   pinMode(RLY_LIGHT, OUTPUT);
+  pinMode(RLY_HEAT, OUTPUT);
 
   Wire.begin();
   if (!timer::initialize()) {
     print("Error: timer");
     return;
   };
-  EEPROM.get(0, miLight0_On.value);
-  miLight0_On.value = clampHHMM(miLight0_On.value);
-  EEPROM.get(2, miLight0_Off.value);
-  miLight0_Off.value = clampHHMM(miLight0_Off.value);
+  EEPROM.get(0, nvmem);
 
   menu::focused = &miMain;
   print("OK");
@@ -96,8 +129,9 @@ void loop() {
   }
 
   unsigned long ms = millis();
-  uint16_t time = miTime.value = clampHHMM(timer::now().total_minutes());
-  uint16_t time0 = miLight0_On.value, time1 = miLight0_Off.value;
+  time = clampHHMM(timer::now().total_minutes());
+  NVMem prev_mem = nvmem;
+  uint16_t prev_time = time;
   auto pos = -enc.getPosition();
   auto delta = pos - prev_pos;
   if (delta) {
@@ -115,14 +149,12 @@ void loop() {
     focused->exec('>');
     last_action_time = ms;
   }
-  if (miTime.value != time) {
-    timer::adjust(timer::Time(miTime.value));
+  if (time != prev_time) {
+    timer::adjust(timer::Time(time));
   }
-  if (miLight0_On.value != time0) {
-    EEPROM.put(0, miLight0_On.value);
-  }
-  if (miLight0_Off.value != time1) {
-    EEPROM.put(2, miLight0_Off.value);
+  if (memcmp(&nvmem, &prev_mem, sizeof(nvmem))) {
+    Serial.println('w');
+    EEPROM.put(0, nvmem);
   }
   auto last_action_timeout = ms - last_action_time;
   out.blink = (last_action_timeout / 500) % 2;
@@ -133,6 +165,8 @@ void loop() {
     display::reset();
   }
   focused->draw_screen(out, 2);
-  bool light = (time >= time0) && (time < time1);
+  bool light = nvmem.light.is_active(time);
   digitalWrite(RLY_LIGHT, light ? HIGH : LOW);
+  bool heat = nvmem.heat[0].is_active(time) || nvmem.heat[1].is_active(time);
+  digitalWrite(RLY_HEAT, heat ? HIGH : LOW);
 }

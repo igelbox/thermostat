@@ -10,3 +10,4 @@
 #define ENC_BTN A3
 
 #define RLY_LIGHT 8
+#define RLY_HEAT 9
